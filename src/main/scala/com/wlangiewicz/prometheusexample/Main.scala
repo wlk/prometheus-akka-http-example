@@ -2,46 +2,59 @@ package com.wlangiewicz.prometheusexample
 
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
-import akka.stream.ActorMaterializer
-import com.lonelyplanet.prometheus.PrometheusResponseTimeRecorder
-import com.lonelyplanet.prometheus.api.MetricsEndpoint
-import com.lonelyplanet.prometheus.directives.ResponseTimeRecordingDirectives
 import akka.http.scaladsl.server.Directives._
+import akka.http.scaladsl.server.Route
+import com.varwise.akka.http.prometheus.PrometheusResponseTimeRecorder
+import com.varwise.akka.http.prometheus.api.MetricsEndpoint
+import com.varwise.akka.http.prometheus.directives.ResponseTimeRecordingDirectives
+import io.prometheus.client.CollectorRegistry
+
+import scala.concurrent.ExecutionContextExecutor
+import scala.util.{Failure, Success}
 
 object Main extends App {
-  implicit val system = ActorSystem("prometheusexample")
-  implicit val dispatcher = system.dispatcher
-  implicit val materializer = ActorMaterializer()
+  implicit private val system: ActorSystem = ActorSystem("prometheusexample")
+  implicit private val dispatcher: ExecutionContextExecutor = system.dispatcher
 
-  val api = new Api()
+  private val api = new Api()
+  private val interface = "0.0.0.0"
+  private val port = 8080
+  private val server = Http().newServerAt(interface, port).bind(api.routes)
 
-  val server = Http().bindAndHandle(api.routes, interface = "0.0.0.0", port = 8080)
-
+  server
+    .onComplete {
+      case Success(_) =>
+        println(s"Example API up on port at $interface:$port")
+      case Failure(ex) =>
+        println(s"Unable to start example API on port $interface:$port")
+        println(ex)
+    }
 }
 
 class Api {
-  val prometheusRegistry = PrometheusResponseTimeRecorder.DefaultRegistry
-  val prometheusResponseTimeRecorder = PrometheusResponseTimeRecorder.Default
+  private val prometheusRegistry: CollectorRegistry = PrometheusResponseTimeRecorder.DefaultRegistry
+  private val prometheusResponseTimeRecorder: PrometheusResponseTimeRecorder = PrometheusResponseTimeRecorder.Default
 
-  val metricsEndpoint = new MetricsEndpoint(prometheusRegistry)
+  private val metricsEndpoint = new MetricsEndpoint(prometheusRegistry)
 
-  val testEndpoint = new TestEndpoint(prometheusResponseTimeRecorder)
+  private val testEndpoint = new TestEndpoint(prometheusResponseTimeRecorder)
 
-  val routes = metricsEndpoint.routes ~ testEndpoint.routes
+  val routes: Route = metricsEndpoint.routes ~ testEndpoint.routes
 }
-
 
 class TestEndpoint(responseTimeRecorder: PrometheusResponseTimeRecorder) {
   private val responseTimeDirectives = ResponseTimeRecordingDirectives(responseTimeRecorder)
-  import responseTimeDirectives._
-  val r = scala.util.Random
 
-  val routes = {
+  import responseTimeDirectives._
+
+  private val r = scala.util.Random
+
+  val routes: Route = {
     get {
       path("example") {
         recordResponseTime("/example") {
           complete {
-            val sleepTime = r.nextInt(1000)
+            val sleepTime = r.nextLong(1000)
             Thread.sleep(sleepTime)
             "OK"
           }
